@@ -1,62 +1,63 @@
 <?php
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+use PDO;
 
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+require __DIR__ . '/vendor/autoload.php';
 
-// à»Ô´¡ÒÃáÊ´§¢éÍ¼Ô´¾ÅÒ´ÊÓËÃÑº¡ÒÃ´ÕºÑ¡
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+$app = AppFactory::create();
 
-// ¢éÍÁÙÅ¡ÒÃàª×èÍÁµèÍ¡Ñº°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
-
-$conn = new mysqli($servername, $username, $password, $dbname);
-
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
-
-// SQL query à¾×èÍ´Ö§¢éÍÁÙÅ¼Ùéãªé·ÕèÂÑ§äÁèªÓÃĞà§Ô¹
-$sql = "SELECT u.id AS user_id, u.name, u.lastname, u.phone, u.email, 
-               b.booth_name, bk.status, z.zone_name, bk.id AS booking_id
-        FROM users u 
-        JOIN bookings bk ON u.id = bk.user_id 
-        JOIN booth b ON bk.booth_id = b.id 
-        JOIN zones z ON b.zone_id = z.id 
-        WHERE bk.status = 'pending_payment'";
-
-$result = $conn->query($sql);
-
-$pending_bookings = [];
-
-if ($result->num_rows > 0) {
-    // ´Ö§¢éÍÁÙÅ¨Ò¡¼ÅÅÑ¾¸ìáÅĞà¾ÔèÁÅ§ã¹ array
-    while($row = $result->fetch_assoc()) {
-        $pending_bookings[] = [
-            "id" => $row["user_id"], // à»ÅÕèÂ¹à»ç¹ user_id à¾×èÍáÂ¡¨Ò¡ booking_id
-            "name" => $row["name"],
-            "lastname" => $row["lastname"],
-            "phone" => $row["phone"],
-            "email" => $row["email"],
-            "booth_name" => $row["booth_name"],
-            "status" => $row["status"],
-            "zone_name" => $row["zone_name"],
-            "booking_id" => $row["booking_id"] // à¾ÔèÁ booking_id ·Õè¹Õè
-        ];
+// CORS Middleware
+$app->add(function (Request $request, Response $response, callable $next) {
+    $response = $response->withHeader('Access-Control-Allow-Origin', '*')
+                         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                         ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if ($request->getMethod() === 'OPTIONS') {
+        return $response;
     }
-    
-    // Êè§¢éÍÁÙÅà»ç¹ JSON
-    echo json_encode(["status" => "success", "pending_bookings" => $pending_bookings]);
+    return $next($request, $response);
+});
 
-} else {
-    echo json_encode(["status" => "error", "message" => "No pending bookings found"]);
+// à¸Ÿà¸±à¸‡à¸à¹Œà¸Šà¸±à¸™à¹€à¸Šà¸·à¹ˆà¸­à¸¡à¸•à¹ˆà¸­à¸à¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸”à¹‰à¸§à¸¢ PDO
+function getConnection() {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+
+    try {
+        $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die(json_encode(["status" => "error", "message" => "Database connection failed: " . $e->getMessage()]));
+    }
 }
 
-$conn->close();
-?>
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸à¸²à¸£à¸ˆà¸­à¸‡à¸šà¸¹à¸˜à¸—à¸µà¹ˆà¸ªà¸–à¸²à¸™à¸° `pending_payment`
+$app->get('/pending-bookings', function (Request $request, Response $response) {
+    $pdo = getConnection();
+
+    $sql = "SELECT u.id AS user_id, u.name, u.lastname, u.phone, u.email, 
+                   b.booth_name, bk.status, z.zone_name, bk.id AS booking_id
+            FROM users u 
+            JOIN bookings bk ON u.id = bk.user_id 
+            JOIN booth b ON bk.booth_id = b.id 
+            JOIN zones z ON b.zone_id = z.id 
+            WHERE bk.status = 'pending_payment'";
+
+    $stmt = $pdo->query($sql);
+    $pending_bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if ($pending_bookings) {
+        $response->getBody()->write(json_encode(["status" => "success", "pending_bookings" => $pending_bookings]));
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "No pending bookings found"]));
+    }
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// Run Slim App
+$app->run();

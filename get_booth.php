@@ -1,37 +1,47 @@
 <?php
-// à»Ô´¡ÒÃáÊ´§¼Å¢éÍ¼Ô´¾ÅÒ´
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
 
-// Í¹Ø­Òµ¡ÒÃà¢éÒ¶Ö§¨Ò¡·Ø¡·Õè
-header('Access-Control-Allow-Origin: *');
-header('Content-Type: application/json');
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+use PDO;
 
-// àª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+require __DIR__ . '/vendor/autoload.php';
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+$app = AppFactory::create();
+$app->addBodyParsingMiddleware();
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-if ($conn->connect_error) {
-    error_log("Connection failed: " . $conn->connect_error); // ºÑ¹·Ö¡¢éÍ¼Ô´¾ÅÒ´
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+// à¸Ÿà¸±à¸‡à¸à¹Œà¸Šà¸±à¸™à¸à¸²à¸£à¹€à¸Šà¸·à¹ˆà¸­à¸¡à¸•à¹ˆà¸­à¸à¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥
+function getConnection() {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+
+    try {
+        $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die(json_encode(["status" => "error", "message" => "Database connection failed: " . $e->getMessage()]));
+    }
 }
 
-// ´Ö§¢éÍÁÙÅºÙ¸
-$sql = "SELECT * FROM booth";
-$result = $conn->query($sql);
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸šà¸¹à¸˜à¸—à¸±à¹‰à¸‡à¸«à¸¡à¸”
+$app->get('/booths', function (Request $request, Response $response) {
+    $pdo = getConnection();
 
-if ($result && $result->num_rows > 0) {
-    $booths = $result->fetch_all(MYSQLI_ASSOC);
-    echo json_encode(["status" => "success", "booths" => $booths]);
-} else {
-    echo json_encode(["status" => "error", "message" => "No booths found"]);
-}
+    $sql = "SELECT * FROM booth";
+    $stmt = $pdo->query($sql);
+    $booths = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$conn->close();
-?>
+    if ($booths) {
+        $response->getBody()->write(json_encode(["status" => "success", "booths" => $booths]));
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "No booths found"]));
+    }
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// Run Slim App
+$app->run();

@@ -1,58 +1,70 @@
 <?php
 
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+use PDO;
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+require __DIR__ . '/vendor/autoload.php';
 
-// ¢éÍÁÙÅ¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+$app = AppFactory::create();
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+// Middleware à¹€à¸à¸·à¹ˆà¸­à¸£à¸­à¸‡à¸£à¸±à¸š JSON body
+$app->addBodyParsingMiddleware();
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+// Error Handling Middleware
+$errorMiddleware = $app->addErrorMiddleware(true, true, true);
+
+// à¸Ÿà¸±à¸‡à¸à¹Œà¸Šà¸±à¸™à¸ªà¸³à¸«à¸£à¸±à¸šà¸ªà¸£à¹‰à¸²à¸‡à¸à¸²à¸£à¹€à¸Šà¸·à¹ˆà¸­à¸¡à¸•à¹ˆà¸­ PDO
+function getConnection() {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+
+    try {
+        $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die(json_encode(["status" => "error", "message" => "Database connection failed: " . $e->getMessage()]));
+    }
 }
 
-// µÃÇ¨ÊÍº¤Ó¢ÍÇèÒà»ç¹ POST
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // ÍèÒ¹¢éÍÁÙÅ JSON ·ÕèÊè§à¢éÒÁÒã¹ request body
-    $data = json_decode(file_get_contents('php://input'), true);
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸à¸²à¸£à¸¥à¸š booth à¸•à¸²à¸¡à¸Šà¸·à¹ˆà¸­
+$app->post('/delete-booth', function (Request $request, Response $response) {
+    $pdo = getConnection();
 
-    // µÃÇ¨ÊÍºÇèÒÁÕ¤èÒ booth_name ¶Ù¡Êè§ÁÒ
+    // à¸£à¸±à¸šà¸‚à¹‰à¸­à¸¡à¸¹à¸¥ JSON à¸—à¸µà¹ˆà¸ªà¹ˆà¸‡à¸¡à¸²à¹ƒà¸™ request body
+    $data = $request->getParsedBody();
+
+    // à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸§à¹ˆà¸²à¸¡à¸µ booth_name à¸«à¸£à¸·à¸­à¹„à¸¡à¹ˆ
     if (!isset($data['booth_name'])) {
-        echo json_encode(["status" => "error", "message" => "Booth name is required"]);
-        exit();
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Booth name is required"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
     }
 
-    // ¡ÓË¹´¤èÒ booth_name ¨Ò¡¢éÍÁÙÅ·ÕèÃÑºÁÒ
     $booth_name = $data['booth_name'];
 
-    // àµÃÕÂÁ¤ÓÊÑè§ SQL à¾×èÍÅº¢éÍÁÙÅµÒÁ booth_name ·Õè¡ÓË¹´
-    $stmt = $conn->prepare("DELETE FROM booth WHERE booth_name = ?");
-    $stmt->bind_param("s", $booth_name);
+    // à¹€à¸•à¸£à¸µà¸¢à¸¡ SQL statement à¹€à¸à¸·à¹ˆà¸­à¸¥à¸šà¸‚à¹‰à¸­à¸¡à¸¹à¸¥
+    $stmt = $pdo->prepare("DELETE FROM booth WHERE booth_name = :booth_name");
+    $stmt->bindParam(':booth_name', $booth_name);
 
-    // ÃÑ¹¤ÓÊÑè§ query áÅĞµÃÇ¨ÊÍº¼ÅÅÑ¾¸ì
-    if ($stmt->execute()) {
-        if ($stmt->affected_rows > 0) {
-            echo json_encode(["status" => "success", "message" => "Booth deleted successfully"]);
+    // à¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£à¸¥à¸šà¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹à¸¥à¸°à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸œà¸¥à¸¥à¸±à¸à¸˜à¹Œ
+    try {
+        $stmt->execute();
+        if ($stmt->rowCount() > 0) {
+            $response->getBody()->write(json_encode(["status" => "success", "message" => "Booth deleted successfully"]));
         } else {
-            echo json_encode(["status" => "error", "message" => "No booth found with that name"]);
+            $response->getBody()->write(json_encode(["status" => "error", "message" => "No booth found with that name"]));
         }
-    } else {
-        echo json_encode(["status" => "error", "message" => "Failed to delete booth"]);
+    } catch (PDOException $e) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Failed to delete booth: " . $e->getMessage()]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
     }
 
-    // »Ô´ statement áÅĞ connection
-    $stmt->close();
-}
+    return $response->withHeader('Content-Type', 'application/json');
+});
 
-$conn->close();
-?>
+// Run app
+$app->run();

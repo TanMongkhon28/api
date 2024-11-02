@@ -1,67 +1,70 @@
 <?php
-// à¾ÔèÁ¡ÒÃµÑé§¤èÒ CORS ·Õè´éÒ¹º¹ÊØ´¢Í§ä¿Åì
-header('Access-Control-Allow-Origin: *'); // Í¹Ø­ÒµãËé·Ø¡â´àÁ¹à¢éÒ¶Ö§ä´é
-header('Access-Control-Allow-Methods: POST, GET, OPTIONS'); // Í¹Ø­Òµ¡ÒÃãªé POST, GET áÅĞ OPTIONS
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With'); // Í¹Ø­Òµ Content-Type, Authorization, áÅĞ X-Requested-With
-header('Content-Type: application/json');
+require 'vendor/autoload.php';
 
-// à»Ô´¡ÒÃáÊ´§¼Å¢éÍ¼Ô´¾ÅÒ´
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
 
-// àª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+$app = AppFactory::create();
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+// CORS Middleware
+$app->add(function (Request $request, Response $response, $next) {
+    $response = $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    return $next($request, $response);
+});
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
+// à¸à¸²à¸£à¸ˆà¸±à¸”à¸à¸²à¸£ Options preflight
+$app->options('/{routes:.+}', function (Request $request, Response $response) {
+    return $response;
+});
 
-// ÃÑº¤èÒ zone_id ¨Ò¡ JSON request
-$input = file_get_contents('php://input');
-$data = json_decode($input, true);
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸šà¸¹à¸˜à¹‚à¸”à¸¢à¹ƒà¸Šà¹‰ zone_id
+$app->post('/get-booths', function (Request $request, Response $response) {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
 
-// µÃÇ¨ÊÍº¡ÒÃá»Å§ JSON áÅĞ¡ÒÃÃÑº zone_id
-if (json_last_error() !== JSON_ERROR_NONE || !$data) {
-    echo json_encode(["status" => "error", "message" => "Invalid JSON input"]);
-    exit();
-}
+    $conn = new mysqli($servername, $username, $password, $dbname);
+    if ($conn->connect_error) {
+        $errorResponse = ["status" => "error", "message" => "Connection failed: " . $conn->connect_error];
+        $response->getBody()->write(json_encode($errorResponse));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
 
-$zone_id = $data['zone_id'] ?? null;
+    $data = json_decode($request->getBody()->getContents(), true);
+    $zone_id = $data['zone_id'] ?? null;
 
-// µÃÇ¨ÊÍºÇèÒ zone_id ¶Ù¡Êè§ÁÒËÃ×ÍäÁè
-if (!$zone_id || !is_numeric($zone_id)) {
-    echo json_encode(["status" => "error", "message" => "Invalid or missing zone_id"]);
-    exit();
-}
+    if (!$zone_id || !is_numeric($zone_id)) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Invalid or missing zone_id"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
 
-// àµÃÕÂÁ SQL query à¾×èÍ´Ö§¢éÍÁÙÅºÙ¸µÒÁ zone_id
-$sql = "SELECT * FROM booth WHERE zone_id = ?";
-$stmt = $conn->prepare($sql);
+    $sql = "SELECT * FROM booth WHERE zone_id = ?";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Failed to prepare SQL: " . $conn->error]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
 
-if (!$stmt) {
-    echo json_encode(["status" => "error", "message" => "Failed to prepare SQL: " . $conn->error]);
-    exit();
-}
+    $stmt->bind_param("i", $zone_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
-$stmt->bind_param("i", $zone_id);
-$stmt->execute();
-$result = $stmt->get_result();
+    if ($result->num_rows > 0) {
+        $booths = $result->fetch_all(MYSQLI_ASSOC);
+        $response->getBody()->write(json_encode(["status" => "success", "booths" => $booths]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(200);
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "No booths found for this zone"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(404);
+    }
 
-// µÃÇ¨ÊÍºÇèÒÁÕ¢éÍÁÙÅºÙ¸ËÃ×ÍäÁè
-if ($result->num_rows > 0) {
-    $booths = $result->fetch_all(MYSQLI_ASSOC);
-    echo json_encode(["status" => "success", "booths" => $booths]);
-} else {
-    echo json_encode(["status" => "error", "message" => "No booths found for this zone"]);
-}
+    $stmt->close();
+    $conn->close();
+});
 
-$stmt->close();
-$conn->close();
-?>
+$app->run();

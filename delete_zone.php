@@ -1,44 +1,70 @@
 <?php
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type");
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+use PDO;
 
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+require __DIR__ . '/vendor/autoload.php';
 
-$conn = new mysqli($servername, $username, $password, $dbname);
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+$app = AppFactory::create();
+
+// Middleware เพื่อรองรับ JSON body
+$app->addBodyParsingMiddleware();
+
+// Error Handling Middleware
+$errorMiddleware = $app->addErrorMiddleware(true, true, true);
+
+// ฟังก์ชันสำหรับสร้างการเชื่อมต่อ PDO
+function getConnection() {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+
+    try {
+        $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die(json_encode(["status" => "error", "message" => "Database connection failed: " . $e->getMessage()]));
+    }
 }
 
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $data = json_decode(file_get_contents('php://input'), true);
+// Route สำหรับการลบ zone โดยชื่อ
+$app->post('/delete-zone', function (Request $request, Response $response) {
+    $pdo = getConnection();
 
-    // ��Ǩ�ͺ����� zone_name �������
+    // รับข้อมูล JSON ที่ส่งมาใน request body
+    $data = $request->getParsedBody();
+
+    // ตรวจสอบว่ามี zone_name หรือไม่
     if (!isset($data['zone_name'])) {
-        echo json_encode(["status" => "error", "message" => "Missing required field 'zone_name'"]);
-        exit();
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Missing required field 'zone_name'"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
     }
 
     $zone_name = $data['zone_name'];
 
-    // ���ҧ����� SQL ź������
-    $stmt = $conn->prepare("DELETE FROM zones WHERE zone_name = ?");
-    $stmt->bind_param("s", $zone_name);
+    // เตรียม SQL statement เพื่อลบข้อมูล
+    $stmt = $pdo->prepare("DELETE FROM zones WHERE zone_name = :zone_name");
+    $stmt->bindParam(':zone_name', $zone_name);
 
-    if ($stmt->execute()) {
-        echo json_encode(["status" => "success", "message" => "Zone deleted successfully"]);
-    } else {
-        echo json_encode(["status" => "error", "message" => "Failed to delete zone: " . $stmt->error]);
+    // ดำเนินการลบข้อมูลและตรวจสอบผลลัพธ์
+    try {
+        $stmt->execute();
+        if ($stmt->rowCount() > 0) {
+            $response->getBody()->write(json_encode(["status" => "success", "message" => "Zone deleted successfully"]));
+        } else {
+            $response->getBody()->write(json_encode(["status" => "error", "message" => "No zone found with that name"]));
+        }
+    } catch (PDOException $e) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Failed to delete zone: " . $e->getMessage()]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
     }
 
-    $stmt->close();
-}
+    return $response->withHeader('Content-Type', 'application/json');
+});
 
-$conn->close();
+// Run app
+$app->run();

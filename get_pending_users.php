@@ -1,61 +1,63 @@
 <?php
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+use PDO;
 
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+require __DIR__ . '/vendor/autoload.php';
 
-// เปิดการแสดงผลข้อผิดพลาด
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+$app = AppFactory::create();
 
-// เชื่อมต่อฐานข้อมูล
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
-
-$conn = new mysqli($servername, $username, $password, $dbname);
-
-// ตรวจสอบการเชื่อมต่อฐานข้อมูล
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
-
-// เตรียม SQL query สำหรับดึงข้อมูลผู้ใช้จากการจองที่มีสถานะ 'pending' และข้อมูลบูธที่จอง
-$sql = "SELECT u.id, u.name, u.lastname, u.phone, u.email, 
-               b.booth_name, bk.status, z.zone_name
-        FROM users u 
-        JOIN bookings bk ON u.id = bk.user_id 
-        JOIN booth b ON bk.booth_id = b.id 
-        JOIN zones z ON b.zone_id = z.id 
-        WHERE bk.status = 'pending'";
-
-$result = $conn->query($sql);
-
-$pending_bookings = [];
-
-if ($result->num_rows > 0) {
-    // วนลูปดึงข้อมูลและเก็บไว้ใน array
-    while($row = $result->fetch_assoc()) {
-        $pending_bookings[] = [
-            "id" => $row["id"],
-            "name" => $row["name"],
-            "lastname" => $row["lastname"],
-            "phone" => $row["phone"],
-            "email" => $row["email"],
-            "booth_name" => $row["booth_name"],
-            "status" => $row["status"], // Updated column name here
-            "zone_name" => $row["zone_name"]
-        ];
+// กำหนด CORS Middleware
+$app->add(function (Request $request, Response $response, callable $next) {
+    $response = $response->withHeader('Access-Control-Allow-Origin', '*')
+                         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                         ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if ($request->getMethod() === 'OPTIONS') {
+        return $response;
     }
-    
-    // ส่งข้อมูลการจองที่ยังไม่ชำระเงินกลับในรูปแบบ JSON
-    echo json_encode(["status" => "success", "pending_bookings" => $pending_bookings]);
+    return $next($request, $response);
+});
 
-} else {
-    echo json_encode(["status" => "error", "message" => "No pending bookings found"]);
+// ฟังก์ชันเชื่อมต่อฐานข้อมูลด้วย PDO
+function getConnection() {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+
+    try {
+        $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die(json_encode(["status" => "error", "message" => "Database connection failed: " . $e->getMessage()]));
+    }
 }
 
-$conn->close();
-?>
+// Route สำหรับดึงข้อมูลการจองที่สถานะ `pending`
+$app->get('/pending-bookings', function (Request $request, Response $response) {
+    $pdo = getConnection();
+
+    $sql = "SELECT u.id, u.name, u.lastname, u.phone, u.email, 
+                   b.booth_name, bk.status, z.zone_name
+            FROM users u 
+            JOIN bookings bk ON u.id = bk.user_id 
+            JOIN booth b ON bk.booth_id = b.id 
+            JOIN zones z ON b.zone_id = z.id 
+            WHERE bk.status = 'pending'";
+
+    $stmt = $pdo->query($sql);
+    $pending_bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if ($pending_bookings) {
+        $response->getBody()->write(json_encode(["status" => "success", "pending_bookings" => $pending_bookings]));
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "No pending bookings found"]));
+    }
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// Run Slim App
+$app->run();

@@ -1,98 +1,106 @@
 <?php
-// à»Ô´¡ÒÃáÊ´§¼Å¢éÍ¼Ô´¾ÅÒ´
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
 
-// µÑé§¤èÒ CORS
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
 
-// ¨Ñ´¡ÒÃ¤Ó¢Í OPTIONS (Preflight Request)
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    header('HTTP/1.1 200 OK');
-    exit();
-}
+require __DIR__ . '/vendor/autoload.php';
 
-// àª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+$app = AppFactory::create();
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+// Middleware à¹€à¸à¸·à¹ˆà¸­à¸ˆà¸±à¸”à¸à¸²à¸£à¸à¸±à¸š CORS Headers
+$app->add(function (Request $request, Response $response, $next) {
+    $response = $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if ($request->getMethod() === 'OPTIONS') {
+        return $response;
+    }
+    return $next($request, $response);
+});
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸­à¸±à¸›à¹€à¸”à¸• payment slip
+$app->post('/update-payment-slip', function (Request $request, Response $response) {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+    $conn = new mysqli($servername, $username, $password, $dbname);
 
-// ÃÑº¤èÒ booking_id ¨Ò¡ request
-$booking_id = $_POST['booking_id'] ?? null;
+    if ($conn->connect_error) {
+        $data = ["status" => "error", "message" => "Connection failed: " . $conn->connect_error];
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
 
-// µÃÇ¨ÊÍºÇèÒÁÕ booking_id áÅĞä¿ÅìËÃ×ÍäÁè
-if (!$booking_id || !isset($_FILES['payment_slip'])) {
-    echo json_encode(["status" => "error", "message" => "Required fields are missing"]);
-    exit();
-}
+    // à¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸ˆà¸²à¸ POST Request
+    $data = $request->getParsedBody();
+    $booking_id = $data['booking_id'] ?? null;
 
-// µÃÇ¨ÊÍºÊ¶Ò¹Ğ¢Í§ booking ¡èÍ¹
-$sql_check_status = "SELECT status FROM bookings WHERE id = ?";
-$stmt_check_status = $conn->prepare($sql_check_status);
-$stmt_check_status->bind_param("i", $booking_id);
-$stmt_check_status->execute();
-$result = $stmt_check_status->get_result();
-$booking = $result->fetch_assoc();
+    if (!$booking_id || !isset($_FILES['payment_slip'])) {
+        $data = ["status" => "error", "message" => "Required fields are missing"];
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
 
-if (!$booking) {
-    echo json_encode(["status" => "error", "message" => "Booking not found"]);
-    exit();
-}
+    // à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸ªà¸–à¸²à¸™à¸°à¸‚à¸­à¸‡à¸à¸²à¸£à¸ˆà¸­à¸‡
+    $stmt = $conn->prepare("SELECT status FROM bookings WHERE id = ?");
+    $stmt->bind_param("i", $booking_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $booking = $result->fetch_assoc();
+    
+    if (!$booking) {
+        $data = ["status" => "error", "message" => "Booking not found"];
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(404);
+    }
+    
+    if ($booking['status'] === 'expired' || $booking['status'] === 'cancelled') {
+        $data = ["status" => "error", "message" => "Cannot make a payment for a booking that is expired or cancelled"];
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
 
-$status = $booking['status'];
+    // à¸ˆà¸±à¸”à¸à¸²à¸£à¸à¸²à¸£à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¹„à¸Ÿà¸¥à¹Œ
+    $target_dir = __DIR__ . "/uploads/";
+    if (!file_exists($target_dir)) {
+        mkdir($target_dir, 0777, true);
+    }
+    
+    $uploadedFile = $_FILES['payment_slip'];
+    $target_file = $target_dir . basename($uploadedFile["name"]);
 
-// äÁèÍ¹Ø­ÒµãËéªÓÃĞà§Ô¹¶éÒÊ¶Ò¹Ğà»ç¹ 'expired' ËÃ×Í 'cancelled'
-if ($status === 'expired' || $status === 'cancelled') {
-    echo json_encode(["status" => "error", "message" => "Cannot make a payment for a booking that is expired or cancelled"]);
-    exit();
-}
+    if (move_uploaded_file($uploadedFile["tmp_name"], $target_file)) {
+        $payment_slip_url = "https://yourdomain.com/uploads/" . basename($uploadedFile["name"]);
+    } else {
+        $data = ["status" => "error", "message" => "Error uploading file"];
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
 
-// µÑé§¤èÒâ¿Åà´ÍÃì·Õè¨ĞºÑ¹·Ö¡ä¿Åì
-$target_dir = "uploads/";
-if (!file_exists($target_dir)) {
-    mkdir($target_dir, 0777, true); // ÊÃéÒ§ä´àÃ¡·ÍÃÕ¶éÒÂÑ§äÁèÁÕ
-}
+    // à¸­à¸±à¸›à¹€à¸”à¸•à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹ƒà¸™à¸à¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥
+    $stmt = $conn->prepare("UPDATE payment SET payment_slip = ?, payment_status = 'pending' WHERE booking_id = ?");
+    if (!$stmt) {
+        $data = ["status" => "error", "message" => "SQL error: " . $conn->error];
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
 
-// µÑé§ª×èÍä¿ÅìáÅĞÂéÒÂä¿Åì·ÕèÍÑ»âËÅ´ä»ÂÑ§â¿Åà´ÍÃì·Õè¡ÓË¹´
-$target_file = $target_dir . basename($_FILES["payment_slip"]["name"]);
-if (move_uploaded_file($_FILES["payment_slip"]["tmp_name"], $target_file)) {
-    $payment_slip_url = "https://yourdomain.com/" . $target_file; // ÊÃéÒ§ URL ¢Í§ä¿Åì
-} else {
-    echo json_encode(["status" => "error", "message" => "Error uploading file"]);
-    exit();
-}
+    $stmt->bind_param("si", $payment_slip_url, $booking_id);
+    if ($stmt->execute()) {
+        $data = ["status" => "success", "message" => "Payment slip updated successfully"];
+    } else {
+        $data = ["status" => "error", "message" => "Error updating payment: " . $stmt->error];
+    }
 
-// àµÃÕÂÁ SQL query à¾×èÍÍÑ»à´µ payment_slip áÅĞ payment_status ã¹µÒÃÒ§ payment â´Âãªé booking_id à»ç¹¤ÕÂì
-$sql_update_payment = "UPDATE payment SET payment_slip = ?, payment_status = 'pending' WHERE booking_id = ?";
-$stmt_update_payment = $conn->prepare($sql_update_payment);
+    $stmt->close();
+    $conn->close();
 
-if (!$stmt_update_payment) {
-    die(json_encode(["status" => "error", "message" => "SQL error: " . $conn->error]));
-}
+    $response->getBody()->write(json_encode($data));
+    return $response->withHeader('Content-Type', 'application/json');
+});
 
-// Bind ¤èÒ·Õè¨Ğãªéã¹ query (payment_slip_url áÅĞ booking_id)
-$stmt_update_payment->bind_param("si", $payment_slip_url, $booking_id);
-
-// Execute query
-if ($stmt_update_payment->execute()) {
-    echo json_encode(["status" => "success", "message" => "Payment slip updated successfully"]);
-} else {
-    echo json_encode(["status" => "error", "message" => "Error updating payment: " . $stmt_update_payment->error]);
-}
-
-// »Ô´¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$stmt_check_status->close();
-$stmt_update_payment->close();
-$conn->close();
-?>
+// à¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™ Slim App
+$app->run();

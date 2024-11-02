@@ -1,80 +1,83 @@
 <?php
-// µÑé§¤èÒ CORS Headers
-header("Access-Control-Allow-Origin: *"); // Í¹Ø­Òµ·Ø¡â´àÁ¹
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS"); // ÃĞºØÇÔ¸Õ¡ÒÃ·ÕèÍ¹Ø­Òµ
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With"); // ÃĞºØ headers ·ÕèÍ¹Ø­Òµ
+require 'vendor/autoload.php';
 
-// µÃÇ¨ÊÍº¡ÒÃàÃÕÂ¡ OPTIONS request ÊÓËÃÑº¡ÒÃ preflight
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
 
-// à»Ô´¡ÒÃáÊ´§¼Å¢éÍ¼Ô´¾ÅÒ´
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+$app = AppFactory::create();
 
-// àª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+// Middleware à¹€à¸à¸·à¹ˆà¸­à¸ˆà¸±à¸”à¸à¸²à¸£ CORS
+$app->add(function (Request $request, Response $response, $next) {
+    $response = $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    return $next($request, $response);
+});
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+// à¸ˆà¸±à¸”à¸à¸²à¸£ OPTIONS request
+$app->options('/{routes:.+}', function (Request $request, Response $response) {
+    return $response;
+});
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸­à¸±à¸›à¹€à¸”à¸•à¸ªà¸–à¸²à¸™à¸°à¸à¸²à¸£à¸ˆà¸­à¸‡
+$app->post('/update-booking', function (Request $request, Response $response) {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
 
-// ÃÑº¢éÍÁÙÅ·Õè¨Óà»ç¹¨Ò¡ request (¼èÒ¹ JSON)
-$input = file_get_contents('php://input');
-$data = json_decode($input, true);
-$booking_id = $data['booking_id'] ?? null;
-$status = $data['status'] ?? null;
-
-// µÃÇ¨ÊÍºÇèÒÁÕ¢éÍÁÙÅ·Õè¨Óà»ç¹¤ÃºËÃ×ÍäÁè
-if (!$booking_id || !$status) {
-    echo json_encode(["status" => "error", "message" => "Required fields are missing"]);
-    exit();
-}
-
-// àµÃÕÂÁ SQL query à¾×èÍÍÑ»à´µÊ¶Ò¹Ğ¡ÒÃ¨Í§ã¹µÒÃÒ§ bookings â´Âãªé booking_id
-$sql = "UPDATE bookings SET status = ? WHERE id = ?";
-$stmt = $conn->prepare($sql);
-if (!$stmt) {
-    die(json_encode(["status" => "error", "message" => "SQL error: " . $conn->error]));
-}
-
-// Bind ¤èÒ·Õè¨Ğãªéã¹ query (status áÅĞ booking_id)
-$stmt->bind_param("si", $status, $booking_id);
-
-// Execute query à¾×èÍµÃÇ¨ÊÍºÊ¶Ò¹Ğ¡ÒÃ¨Í§
-if ($stmt->execute()) {
-    // µÃÇ¨ÊÍºÇèÒ¶éÒÊ¶Ò¹Ğà»ç¹ 'cancelled' ãËéÍÑ»à´µÊ¶Ò¹Ğã¹µÒÃÒ§ payment à»ç¹ 'failed'
-    if ($status === 'cancelled') {
-        // àµÃÕÂÁ SQL query ÊÓËÃÑºÍÑ»à´µÊ¶Ò¹Ğ payment à»ç¹ 'failed'
-        $updatePaymentSQL = "UPDATE payment SET payment_status = 'failed' WHERE booking_id = ?";
-        $stmtUpdatePayment = $conn->prepare($updatePaymentSQL);
-        if (!$stmtUpdatePayment) {
-            die(json_encode(["status" => "error", "message" => "SQL error: " . $conn->error]));
-        }
-        $stmtUpdatePayment->bind_param("i", $booking_id);
-        if ($stmtUpdatePayment->execute()) {
-            echo json_encode(["status" => "success", "message" => "Booking and payment status updated successfully"]);
-        } else {
-            echo json_encode(["status" => "error", "message" => "Error updating payment: " . $stmtUpdatePayment->error]);
-        }
-        $stmtUpdatePayment->close();
-    } else {
-        echo json_encode(["status" => "success", "message" => "Booking status updated successfully"]);
+    $conn = new mysqli($servername, $username, $password, $dbname);
+    if ($conn->connect_error) {
+        $errorResponse = ["status" => "error", "message" => "Connection failed: " . $conn->connect_error];
+        $response->getBody()->write(json_encode($errorResponse));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
     }
-} else {
-    echo json_encode(["status" => "error", "message" => "Error updating booking: " . $stmt->error]);
-}
 
-// »Ô´¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$stmt->close();
-$conn->close();
-?>
+    $data = json_decode($request->getBody()->getContents(), true);
+    $booking_id = $data['booking_id'] ?? null;
+    $status = $data['status'] ?? null;
+
+    if (!$booking_id || !$status) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Required fields are missing"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
+
+    $sql = "UPDATE bookings SET status = ? WHERE id = ?";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "SQL error: " . $conn->error]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
+
+    $stmt->bind_param("si", $status, $booking_id);
+
+    if ($stmt->execute()) {
+        if ($status === 'cancelled') {
+            $updatePaymentSQL = "UPDATE payment SET payment_status = 'failed' WHERE booking_id = ?";
+            $stmtUpdatePayment = $conn->prepare($updatePaymentSQL);
+            if (!$stmtUpdatePayment) {
+                $response->getBody()->write(json_encode(["status" => "error", "message" => "SQL error: " . $conn->error]));
+                return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+            }
+            $stmtUpdatePayment->bind_param("i", $booking_id);
+            if ($stmtUpdatePayment->execute()) {
+                $response->getBody()->write(json_encode(["status" => "success", "message" => "Booking and payment status updated successfully"]));
+            } else {
+                $response->getBody()->write(json_encode(["status" => "error", "message" => "Error updating payment: " . $stmtUpdatePayment->error]));
+            }
+            $stmtUpdatePayment->close();
+        } else {
+            $response->getBody()->write(json_encode(["status" => "success", "message" => "Booking status updated successfully"]));
+        }
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Error updating booking: " . $stmt->error]));
+    }
+
+    $stmt->close();
+    $conn->close();
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->run();

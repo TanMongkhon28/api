@@ -1,59 +1,60 @@
 <?php
-// à»Ô´¡ÒÃáÊ´§¼Å¢éÍ¼Ô´¾ÅÒ´
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+require 'vendor/autoload.php';
 
-// à¾ÔèÁÊèÇ¹ CORS header
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+
+$app = AppFactory::create();
+
+// à¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸²à¹à¸ªà¸”à¸‡à¸‚à¹‰à¸­à¸œà¸´à¸”à¸à¸¥à¸²à¸”à¹à¸¥à¸°à¸à¸²à¸£à¹€à¸Šà¸·à¹ˆà¸­à¸¡à¸•à¹ˆà¸­ CORS headers
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
-// µÃÇ¨ÊÍºÇèÒà»ç¹¤Ó¢Í OPTIONS ËÃ×ÍäÁè (preflight request)
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200); // µÍº¡ÅÑº´éÇÂ 200 OK
-    exit();
-}
+// à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸² Options preflight request
+$app->options('/{routes:.+}', function (Request $request, Response $response) {
+    return $response;
+});
 
-// àª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+$app->post('/booth-details', function (Request $request, Response $response) {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $password, $dbname);
+    if ($conn->connect_error) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
+    $data = json_decode($request->getBody()->getContents(), true);
+    $booth_id = $data['booth_id'] ?? null;
 
-// ÃÑº¤èÒ booth_id ·ÕèµéÍ§¡ÒÃ¨Ò¡ request (àªè¹¼èÒ¹ URL ËÃ×Í JSON)
-$input = file_get_contents('php://input');
-$data = json_decode($input, true);
-$booth_id = $data['booth_id'] ?? null; // µÃÇ¨ÊÍºÇèÒÁÕ booth_id ¶Ù¡Êè§ÁÒËÃ×ÍäÁè
+    if (!$booth_id) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "booth_id is required"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
 
-if (!$booth_id) {
-    echo json_encode(["status" => "error", "message" => "booth_id is required"]);
-    exit();
-}
+    // SQL query
+    $sql = "SELECT * FROM booth WHERE id = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $booth_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
-// àµÃÕÂÁ SQL query à¾×èÍ´Ö§¢éÍÁÙÅºÙ¸µÒÁ booth_id
-$sql = "SELECT * FROM booth WHERE id = ?";
-$stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $booth_id);
-$stmt->execute();
-$result = $stmt->get_result();
+    if ($result->num_rows > 0) {
+        $booth = $result->fetch_assoc();
+        $response->getBody()->write(json_encode(["status" => "success", "booth" => $booth]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(200);
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Booth not found"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(404);
+    }
 
-// µÃÇ¨ÊÍºÇèÒÁÕ¢éÍÁÙÅºÙ¸ËÃ×ÍäÁè
-if ($result->num_rows > 0) {
-    $booth = $result->fetch_assoc(); // ´Ö§¢éÍÁÙÅá¶Çà´ÕÂÇ (ºÙ¸)
-    echo json_encode(["status" => "success", "booth" => $booth]);
-} else {
-    echo json_encode(["status" => "error", "message" => "Booth not found"]);
-}
+    $stmt->close();
+    $conn->close();
+});
 
-// »Ô´¡ÒÃàª×èÍÁµèÍ
-$stmt->close();
-$conn->close();
-?>
+$app->run();

@@ -1,34 +1,37 @@
 <?php
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS, PUT"); // Í¹Ø­Òµ PUT ´éÇÂ
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+require 'vendor/autoload.php';
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
 
-session_start();
+$app = AppFactory::create();
 
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+// Middleware à¹€à¸à¸·à¹ˆà¸­à¸ˆà¸±à¸”à¸à¸²à¸£ CORS
+$app->add(function (Request $request, Response $response, $next) {
+    $response = $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    return $next($request, $response);
+});
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸­à¸±à¸›à¹€à¸”à¸•à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸šà¸¹à¸˜
+$app->put('/update-booth', function (Request $request, Response $response) {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
 
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
+    $conn = new mysqli($servername, $username, $password, $dbname);
 
-// µÃÇ¨ÊÍºÇèÒà»ç¹ PUT request
-if ($_SERVER["REQUEST_METHOD"] == "PUT") {
-    // ÃÑº¢éÍÁÙÅ JSON ¨Ò¡ body ¢Í§ request
-    $input = file_get_contents('php://input');
-    $data = json_decode($input, true);
-
-    if (!$data) {
-        die(json_encode(["status" => "error", "message" => "Invalid JSON input"]));
+    if ($conn->connect_error) {
+        $errorResponse = ["status" => "error", "message" => "Connection failed: " . $conn->connect_error];
+        $response->getBody()->write(json_encode($errorResponse));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
     }
+
+    $data = json_decode($request->getBody()->getContents(), true);
 
     $id = $data['id'] ?? null;
     $booth_name = $data['booth_name'] ?? null;
@@ -39,27 +42,29 @@ if ($_SERVER["REQUEST_METHOD"] == "PUT") {
     $zone_id = $data['zone_id'] ?? null;
 
     if (!$id || !$booth_name || !$booth_size || !$status || !$price || !$zone_id) {
-        echo json_encode(["status" => "error", "message" => "Required fields are missing or invalid"]);
-        exit();
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Required fields are missing or invalid"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
     }
 
-    // àµÃÕÂÁ SQL statement
     $sql = "UPDATE booth SET booth_name=?, booth_size=?, status=?, price=?, image_url=?, zone_id=? WHERE id=?";
     $stmt = $conn->prepare($sql);
-
     if (!$stmt) {
-        die(json_encode(["status" => "error", "message" => "SQL preparation failed: " . $conn->error]));
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "SQL preparation failed: " . $conn->error]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
     }
 
     $stmt->bind_param("sssisis", $booth_name, $booth_size, $status, $price, $image_url, $zone_id, $id);
 
     if ($stmt->execute()) {
-        echo json_encode(["status" => "success", "message" => "Booth information updated successfully"]);
+        $response->getBody()->write(json_encode(["status" => "success", "message" => "Booth information updated successfully"]));
     } else {
-        echo json_encode(["status" => "error", "message" => "Error updating booth information: " . $stmt->error]);
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Error updating booth information: " . $stmt->error]));
     }
 
     $stmt->close();
     $conn->close();
-}
-?>
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->run();

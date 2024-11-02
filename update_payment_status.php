@@ -1,57 +1,60 @@
 <?php
+require 'vendor/autoload.php';
 
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
 
-// เปิดการแสดงผลข้อผิดพลาด
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+$app = AppFactory::create();
 
-// เชื่อมต่อฐานข้อมูล
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+$app->add(function (Request $request, Response $response, $next) {
+    $response = $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if ($request->getMethod() === 'OPTIONS') {
+        return $response;
+    }
+    return $next($request, $response);
+});
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+$app->put('/update-payment-status', function (Request $request, Response $response) {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
 
-// ตรวจสอบการเชื่อมต่อฐานข้อมูล
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
+    $conn = new mysqli($servername, $username, $password, $dbname);
 
-// รับข้อมูลที่จำเป็นจาก request (ผ่าน JSON)
-$input = file_get_contents('php://input');
-$data = json_decode($input, true);
-$booking_id = $data['booking_id'] ?? null;
+    if ($conn->connect_error) {
+        $data = ["status" => "error", "message" => "Connection failed: " . $conn->connect_error];
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+    }
 
-// ตรวจสอบว่ามีข้อมูลที่จำเป็นครบหรือไม่
-if (!$booking_id) {
-    echo json_encode(["status" => "error", "message" => "Booking ID is required"]);
-    exit();
-}
+    $data = json_decode($request->getBody()->getContents(), true);
 
-// เตรียม SQL query เพื่อเปลี่ยนสถานะการชำระเงินเป็น "paid"
-$sql = "UPDATE payment SET payment_status = 'paid' WHERE booking_id = ?";
-$stmt = $conn->prepare($sql);
+    if (!isset($data['booking_id'], $data['payment_status'])) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Missing required fields"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
 
-if (!$stmt) {
-    die(json_encode(["status" => "error", "message" => "SQL error: " . $conn->error]));
-}
+    $booking_id = $data['booking_id'];
+    $payment_status = $data['payment_status'];
 
-// Bind ค่าที่จะใช้ใน query (booking_id)
-$stmt->bind_param("i", $booking_id);
+    $stmt = $conn->prepare("UPDATE payment SET payment_status = ? WHERE booking_id = ?");
+    $stmt->bind_param("si", $payment_status, $booking_id);
 
-// Execute query
-if ($stmt->execute()) {
-    echo json_encode(["status" => "success", "message" => "Payment status updated to paid"]);
-} else {
-    echo json_encode(["status" => "error", "message" => "Error updating payment status: " . $stmt->error]);
-}
+    if ($stmt->execute()) {
+        $response->getBody()->write(json_encode(["status" => "success", "message" => "Payment status updated successfully"]));
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Failed to update payment status: " . $stmt->error]));
+    }
 
-// ปิดการเชื่อมต่อฐานข้อมูล
-$stmt->close();
-$conn->close();
-?>
+    $stmt->close();
+    $conn->close();
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->run();

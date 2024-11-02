@@ -1,64 +1,62 @@
 <?php
+require 'vendor/autoload.php';
 
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS, PUT, DELETE");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
 
-// Handle OPTIONS request for CORS preflight
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
+$app = AppFactory::create();
 
-// Display errors for debugging
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+// Middleware สำหรับจัดการ CORS
+$app->add(function (Request $request, Response $response, $next) {
+    $response = $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    return $next($request, $response);
+});
 
-// Database connection
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+// Route สำหรับอัปเดตข้อมูล event
+$app->put('/update-event', function (Request $request, Response $response) {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
 
-$conn = new mysqli($servername, $username, $password, $dbname);
-
-// Check connection
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
-}
-
-// Update event if PUT request is received
-if ($_SERVER["REQUEST_METHOD"] == "PUT") {
-    $data = json_decode(file_get_contents('php://input'), true);
-
-    // Check required fields
-    if (!isset($data['event_id']) || !isset($data['event_name']) || !isset($data['event_start_date']) || !isset($data['event_end_date'])) {
-        echo json_encode(["status" => "error", "message" => "Missing required fields"]);
-        exit();
+    $conn = new mysqli($servername, $username, $password, $dbname);
+    if ($conn->connect_error) {
+        $errorResponse = ["status" => "error", "message" => "Connection failed: " . $conn->connect_error];
+        $response->getBody()->write(json_encode($errorResponse));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
     }
 
-    $event_id = $data['event_id'];
-    $event_name = $data['event_name'];
-    $event_start_date = $data['event_start_date'];
-    $event_end_date = $data['event_end_date'];
+    $data = json_decode($request->getBody()->getContents(), true);
 
-    // Update event data in the database
+    $event_id = $data['event_id'] ?? null;
+    $event_name = $data['event_name'] ?? null;
+    $event_start_date = $data['event_start_date'] ?? null;
+    $event_end_date = $data['event_end_date'] ?? null;
+
+    if (!$event_id || !$event_name || !$event_start_date || !$event_end_date) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Missing required fields"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
+
     $stmt = $conn->prepare("UPDATE events SET event_name = ?, event_start_date = ?, event_end_date = ? WHERE event_id = ?");
     $stmt->bind_param("sssi", $event_name, $event_start_date, $event_end_date, $event_id);
 
     if ($stmt->execute()) {
-        if ($stmt->affected_rows > 0) {
-            echo json_encode(["status" => "success", "message" => "Event updated successfully"]);
-        } else {
-            echo json_encode(["status" => "error", "message" => "No event found with the given ID"]);
-        }
+        $message = ($stmt->affected_rows > 0) ? "Event updated successfully" : "No event found with the given ID";
+        $status = ($stmt->affected_rows > 0) ? "success" : "error";
+        $response->getBody()->write(json_encode(["status" => $status, "message" => $message]));
     } else {
-        echo json_encode(["status" => "error", "message" => "Failed to update event"]);
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "Failed to update event"]));
     }
 
     $stmt->close();
-}
+    $conn->close();
 
-$conn->close();
-?>
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->run();

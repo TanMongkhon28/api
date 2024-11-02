@@ -1,60 +1,65 @@
 <?php
-// à»Ô´¡ÒÃáÊ´§¼Å¢éÍ¼Ô´¾ÅÒ´
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
 
-// µÑé§¤èÒ CORS à¾×èÍÍ¹Ø­Òµ¡ÒÃà¢éÒ¶Ö§¨Ò¡ÀÒÂ¹Í¡
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+use PDO;
 
-// àª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+require __DIR__ . '/vendor/autoload.php';
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+$app = AppFactory::create();
+$app->addBodyParsingMiddleware();
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+// à¸Ÿà¸±à¸‡à¸à¹Œà¸Šà¸±à¸™à¸ªà¸£à¹‰à¸²à¸‡à¸à¸²à¸£à¹€à¸Šà¸·à¹ˆà¸­à¸¡à¸•à¹ˆà¸­ PDO
+function getConnection() {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+
+    try {
+        $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die(json_encode(["status" => "error", "message" => "Database connection failed: " . $e->getMessage()]));
+    }
 }
 
-// ÃÑº user_id ·ÕèµéÍ§¡ÒÃ¨Ò¡ request (àªè¹¼èÒ¹ JSON)
-$input = file_get_contents('php://input');
-$data = json_decode($input, true);
-$user_id = $data['user_id'] ?? null; // µÃÇ¨ÊÍºÇèÒÁÕ user_id ¶Ù¡Êè§ÁÒËÃ×ÍäÁè
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸à¸²à¸£à¸ˆà¸­à¸‡à¸šà¸¹à¸˜à¸‚à¸­à¸‡à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¸•à¸²à¸¡ user_id
+$app->post('/get-user-bookings', function (Request $request, Response $response) {
+    $pdo = getConnection();
+    $data = $request->getParsedBody();
+    $user_id = $data['user_id'] ?? null;
 
-if (!$user_id) {
-    echo json_encode(["status" => "error", "message" => "user_id is required"]);
-    exit();
-}
+    if (!$user_id) {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "user_id is required"]));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+    }
 
-// àµÃÕÂÁ SQL query à¾×èÍ´Ö§¢éÍÁÙÅºÙ¸·Õè¶Ù¡¨Í§â´Â user_id áÅĞ´Ö§¢éÍÁÙÅ details ÁÒ´éÇÂ
-$sql = "
-    SELECT bookings.id AS booking_id, booth.*, bookings.status AS booking_status, 
-           bookings.booking_date, bookings.payment_due_date, bookings.details, bookings.event_id
-    FROM booth
-    JOIN bookings ON booth.id = bookings.booth_id
-    WHERE bookings.user_id = ? AND bookings.status != 'cancelled' AND bookings.status != 'expired';
-";
+    // SQL query à¸ªà¸³à¸«à¸£à¸±à¸šà¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸à¸²à¸£à¸ˆà¸­à¸‡à¸šà¸¹à¸˜à¸‚à¸­à¸‡à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰
+    $sql = "
+        SELECT bookings.id AS booking_id, booth.*, bookings.status AS booking_status, 
+               bookings.booking_date, bookings.payment_due_date, bookings.details, bookings.event_id
+        FROM booth
+        JOIN bookings ON booth.id = bookings.booth_id
+        WHERE bookings.user_id = :user_id 
+          AND bookings.status != 'cancelled' 
+          AND bookings.status != 'expired';
+    ";
 
-$stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$result = $stmt->get_result();
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(['user_id' => $user_id]);
+    $booths = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// µÃÇ¨ÊÍºÇèÒÁÕ¢éÍÁÙÅËÃ×ÍäÁè
-if ($result->num_rows > 0) {
-    $booths = $result->fetch_all(MYSQLI_ASSOC); // ´Ö§¢éÍÁÙÅ·Ñé§ËÁ´ã¹ÃÙ»áºº associative array
-    echo json_encode(["status" => "success", "booths" => $booths]);
-} else {
-    echo json_encode(["status" => "error", "message" => "No booked booths found for this user"]);
-}
+    if ($booths) {
+        $response->getBody()->write(json_encode(["status" => "success", "booths" => $booths]));
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "No booked booths found for this user"]));
+    }
 
-// »Ô´¡ÒÃàª×èÍÁµèÍ
-$stmt->close();
-$conn->close();
-?>
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// Run app
+$app->run();

@@ -1,37 +1,57 @@
 <?php
-header('Access-Control-Allow-Origin: *');
-header('Content-Type: application/json');
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Factory\AppFactory;
+use PDO;
 
-// à»Ô´¡ÒÃáÊ´§¼Å¢éÍ¼Ô´¾ÅÒ´ (ãªéÊÓËÃÑº´ÕºÑ¡)
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+require __DIR__ . '/vendor/autoload.php';
 
-// àª×èÍÁµèÍ°Ò¹¢éÍÁÙÅ
-$servername = "151.106.124.154";
-$username = "u583789277_wag19";
-$password = "2567Inspire";
-$dbname = "u583789277_wag19";
+$app = AppFactory::create();
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+// à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸² CORS
+$app->add(function (Request $request, Response $response, callable $next) {
+    $response = $response->withHeader('Access-Control-Allow-Origin', '*')
+                         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                         ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if ($request->getMethod() === 'OPTIONS') {
+        return $response;
+    }
+    return $next($request, $response);
+});
 
-// µÃÇ¨ÊÍº¡ÒÃàª×èÍÁµèÍ
-if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+// à¸Ÿà¸±à¸‡à¸à¹Œà¸Šà¸±à¸™à¹€à¸Šà¸·à¹ˆà¸­à¸¡à¸•à¹ˆà¸­à¸à¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸”à¹‰à¸§à¸¢ PDO
+function getConnection() {
+    $servername = "151.106.124.154";
+    $username = "u583789277_wag19";
+    $password = "2567Inspire";
+    $dbname = "u583789277_wag19";
+
+    try {
+        $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die(json_encode(["status" => "error", "message" => "Database connection failed: " . $e->getMessage()]));
+    }
 }
 
-// ´Ö§¢éÍÁÙÅ¨Ò¡µÒÃÒ§ zones ·ÕèÁÕ event_id = 1
-$sql = "SELECT id, zone_name, zone_description, num_booths FROM zones";
-$result = $conn->query($sql);
+// Route à¸ªà¸³à¸«à¸£à¸±à¸šà¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸‹à¸™à¸ˆà¸²à¸à¸•à¸²à¸£à¸²à¸‡ `zones`
+$app->get('/zones', function (Request $request, Response $response) {
+    $pdo = getConnection();
 
-// µÃÇ¨ÊÍºÇèÒÁÕ¢éÍÁÙÅËÃ×ÍäÁè
-if ($result->num_rows > 0) {
-    $zones = $result->fetch_all(MYSQLI_ASSOC);
-    echo json_encode(["status" => "success", "zones" => $zones]);
-} else {
-    echo json_encode(["status" => "error", "message" => "No zones found for event_id = 1"]);
-}
+    // SQL query à¹€à¸à¸·à¹ˆà¸­à¸”à¸¶à¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸‹à¸™
+    $sql = "SELECT id, zone_name, zone_description, num_booths FROM zones";
+    $stmt = $pdo->query($sql);
+    $zones = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// »Ô´¡ÒÃàª×èÍÁµèÍ
-$conn->close();
-?>
+    if ($zones) {
+        $response->getBody()->write(json_encode(["status" => "success", "zones" => $zones]));
+    } else {
+        $response->getBody()->write(json_encode(["status" => "error", "message" => "No zones found"]));
+    }
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// Run Slim App
+$app->run();
